@@ -13,7 +13,7 @@ use XML::Simple;
 
 use base qw(Class::Accessor::Fast);
 __PACKAGE__->mk_accessors(
-    qw(aws_access_key_id aws_secret_access_key secure ua err errstr timeout retry host)
+    qw(aws_access_key_id aws_secret_access_key secure ua err errstr timeout retry host disable_dns_buckets)
 );
 our $VERSION = '0.45';
 
@@ -31,6 +31,7 @@ sub new {
     $self->secure(0)                if not defined $self->secure;
     $self->timeout(30)              if not defined $self->timeout;
     $self->host('s3.amazonaws.com') if not defined $self->host;
+    $self->disable_dns_buckets(0)   if not defined $self->disable_dns_buckets;
 
     my $ua;
     if ($self->retry) {
@@ -231,7 +232,9 @@ sub _validate_acl_short {
 # EU buckets must be accessed via their DNS name. This routine figures out if
 # a given bucket name can be safely used as a DNS name.
 sub _is_dns_bucket {
-    my $bucketname = $_[0];
+    my ($self, $bucketname) = @_;
+
+    return 0 if $self->disable_dns_buckets;
 
     if (length $bucketname > 63) {
         return 0;
@@ -264,7 +267,7 @@ sub _make_request {
     my $protocol = $self->secure ? 'https' : 'http';
     my $host     = $self->host;
     my $url      = "$protocol://$host/$path";
-    if ($path =~ m{^([^/?]+)(.*)} && _is_dns_bucket($1)) {
+    if ($path =~ m{^([^/?]+)(.*)} && $self->_is_dns_bucket($1)) {
         $url = "$protocol://$1.$host$2";
     }
 
@@ -370,7 +373,8 @@ sub _croak_if_response_error {
 }
 
 sub _xpc_of_content {
-    return XMLin($_[1], 'SuppressEmpty' => '', 'ForceArray' => ['Contents']);
+    my $self = shift;
+    return XMLin(shift, 'SuppressEmpty' => '', 'ForceArray' => ['Contents'], @_);
 }
 
 # returns 1 if errors were found
@@ -384,7 +388,7 @@ sub _remember_errors {
         return 1;
     }
 
-    my $r = ref $src ? $src : $self->_xpc_of_content($src);
+    my $r = ref $src ? $src : $self->_xpc_of_content($src, 'KeepRoot' => 1);
 
     if ($r->{Error}) {
         $self->err($r->{Error}{Code});
